@@ -21,7 +21,7 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 MDICT_VERSION = "1.3.14"
 DDK_REPOSITORY = "https://github.com/SebastianSzturo/Dictionary-Development-Kit.git"
 XML_INVALID_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
@@ -344,6 +344,30 @@ def compile_dictionary(ddk: Path, project: Path, name: str) -> Path:
     return bundle
 
 
+def copy_resources(source: Path, destination: Path) -> tuple[int, int]:
+    """Copy a large MDD resource tree without expanding paths into one argv."""
+    copied = 0
+    skipped = 0
+    destination.mkdir(parents=True, exist_ok=True)
+    for item in source.rglob("*"):
+        relative = item.relative_to(source)
+        target = destination / relative
+        if item.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if not item.is_file():
+            skipped += 1
+            continue
+        # Never let an MDD resource replace compiler-generated dictionary data.
+        if target.exists():
+            skipped += 1
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(item, target)
+        copied += 1
+    return copied, skipped
+
+
 def verify_bundle(bundle: Path) -> None:
     resources = bundle / "Contents" / "Resources"
     required = ["Body.data", "KeyText.index", "EntryID.index", "DefaultStyle.css"]
@@ -401,13 +425,23 @@ def worker(args: argparse.Namespace) -> None:
         write_css(css, project / "Dictionary.css")
         write_plist(project / "Info.plist", name, safe_identifier(name, mdx))
 
+        extracted_resources: Path | None = None
         if args.keep_resources and mdds:
             emit(0.61, "提取 MDD 资源")
-            written, skipped = extract_resources(mdds, project / "OtherResources")
+            extracted_resources = project / "MDDResources"
+            written, skipped = extract_resources(mdds, extracted_resources)
             log(f"已提取 {written:,} 个资源；跳过 {skipped:,} 个不安全路径。")
 
         emit(0.72, "编译 macOS 原生词典")
         bundle = compile_dictionary(ddk, project, name)
+
+        if extracted_resources is not None:
+            emit(0.88, "复制词典资源")
+            copied, conflicts = copy_resources(
+                extracted_resources,
+                bundle / "Contents" / "Resources",
+            )
+            log(f"已复制 {copied:,} 个资源到词典包；跳过 {conflicts:,} 个冲突项。")
         verify_bundle(bundle)
 
         emit(0.92, "保存词典包")
