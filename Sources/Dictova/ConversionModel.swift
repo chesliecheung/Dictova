@@ -268,7 +268,7 @@ final class ConversionModel: ObservableObject {
                     let root = manager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Dictionaries", isDirectory: true)
                     try manager.createDirectory(at: root, withIntermediateDirectories: true)
                     let destination = Self.uniqueInstallDestination(in: root, sourceName: source.lastPathComponent)
-                    try manager.copyItem(at: source, to: destination)
+                    try Self.cloneOrCopyItem(from: source, to: destination)
                     try manager.setAttributes([.modificationDate: Date()], ofItemAtPath: root.path)
                     return destination
                 }
@@ -366,6 +366,23 @@ final class ConversionModel: ObservableObject {
         let base = (sourceName as NSString).deletingPathExtension
         let suffix = Int(Date().timeIntervalSince1970)
         return root.appendingPathComponent("\(base)-\(suffix).dictionary", isDirectory: true)
+    }
+
+    nonisolated private static func cloneOrCopyItem(from source: URL, to destination: URL) throws {
+        let clone = Process()
+        clone.executableURL = URL(fileURLWithPath: "/bin/cp")
+        clone.arguments = ["-cR", source.path, destination.path]
+        clone.standardOutput = FileHandle.nullDevice
+        clone.standardError = FileHandle.nullDevice
+        try clone.run()
+        clone.waitUntilExit()
+        if clone.terminationStatus == 0 { return }
+
+        let manager = FileManager.default
+        if manager.fileExists(atPath: destination.path) {
+            try? manager.removeItem(at: destination)
+        }
+        try manager.copyItem(at: source, to: destination)
     }
 
     nonisolated private static var nativeDictionaryFolder: URL {

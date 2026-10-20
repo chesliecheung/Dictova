@@ -23,4 +23,4 @@ Dictova 以本地优先为设计原则。
 - 一键导入会将 `.dictionary` 包复制到 `~/Library/Dictionaries`
 - 用户可以从 Dictova 的“工具”页打开或管理这些目录
 
-本说明适用于 Dictova 1.6.1。
+本说明适用于 Dictova 1.6.2。

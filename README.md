@@ -11,7 +11,7 @@
 <p align="center">
   <img alt="macOS 13+" src="https://img.shields.io/badge/macOS-13%2B-111111?logo=apple">
   <img alt="Swift 5.9" src="https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white">
-  <img alt="Version 1.6.1" src="https://img.shields.io/badge/version-1.6.1-315CFF">
+  <img alt="Version 1.6.2" src="https://img.shields.io/badge/version-1.6.2-315CFF">
 </p>
 
 Dictova 是一款原生 SwiftUI macOS 工具，可以把 `.mdx`、多卷 `.mdd` 和配套 `.css` 转换为 Apple“词典”App 可识别的 `.dictionary` 包，并一键导入到用户词典目录。
@@ -28,6 +28,7 @@ Dictova 是一款原生 SwiftUI macOS 工具，可以把 `.mdx`、多卷 `.mdd` 
 - 一键导入 `~/Library/Dictionaries`
 - 转换完成后直接打开 Finder 或系统“词典”App
 - 环境检查、日志复制、转换取消和自动导入
+- 大型词典使用同卷原子保存与 APFS 快速克隆，避免末尾重复复制
 - 同时支持 Apple Silicon 与 Intel Mac
 
 ## 使用方法

@@ -21,7 +21,7 @@ import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.6.2"
 MDICT_VERSION = "1.3.14"
 DDK_REPOSITORY = "https://github.com/SebastianSzturo/Dictionary-Development-Kit.git"
 XML_INVALID_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
@@ -344,10 +344,11 @@ def compile_dictionary(ddk: Path, project: Path, name: str) -> Path:
     return bundle
 
 
-def copy_resources(source: Path, destination: Path) -> tuple[int, int]:
-    """Copy a large MDD resource tree without expanding paths into one argv."""
-    copied = 0
+def move_resources(source: Path, destination: Path, total: int) -> tuple[int, int, int]:
+    """Merge an MDD resource tree without copying its file contents again."""
+    moved = 0
     skipped = 0
+    moved_bytes = 0
     destination.mkdir(parents=True, exist_ok=True)
     for item in source.rglob("*"):
         relative = item.relative_to(source)
@@ -363,9 +364,29 @@ def copy_resources(source: Path, destination: Path) -> tuple[int, int]:
             skipped += 1
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(item, target)
-        copied += 1
-    return copied, skipped
+        size = item.stat().st_size
+        os.replace(item, target)
+        moved += 1
+        moved_bytes += size
+        if moved % 2000 == 0:
+            progress = 0.88 + 0.035 * (moved / max(total, 1))
+            emit(progress, f"整理资源 {moved:,} / {total:,}")
+    return moved, skipped, moved_bytes
+
+
+def clone_or_copytree(source: Path, destination: Path) -> bool:
+    """Prefer an APFS clone and fall back to a regular recursive copy."""
+    cloned = subprocess.run(
+        ["/bin/cp", "-cR", str(source), str(destination)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if cloned.returncode == 0:
+        return True
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination, symlinks=True)
+    return False
 
 
 def verify_bundle(bundle: Path) -> None:
@@ -414,7 +435,9 @@ def worker(args: argparse.Namespace) -> None:
     log("MDD：" + (", ".join(path.name for path in mdds) if mdds else "无"))
     log("CSS：" + (css.name if css else "使用内置样式"))
 
-    with tempfile.TemporaryDirectory(prefix="Dictova-") as temporary:
+    # Keeping the work directory beside the destination lets finalization use
+    # atomic renames instead of copying a potentially huge bundle a second time.
+    with tempfile.TemporaryDirectory(prefix=".Dictova-", dir=output) as temporary:
         project = Path(temporary)
         emit(0.15, "读取 MDX 词条")
         count = write_dictionary_xml(mdx, project / "Dictionary.xml")
@@ -434,21 +457,24 @@ def worker(args: argparse.Namespace) -> None:
 
         emit(0.72, "编译 macOS 原生词典")
         bundle = compile_dictionary(ddk, project, name)
+        compiled_size = sum(path.stat().st_size for path in bundle.rglob("*") if path.is_file())
+        resource_size = 0
 
         if extracted_resources is not None:
-            emit(0.88, "复制词典资源")
-            copied, conflicts = copy_resources(
+            emit(0.88, "整理词典资源")
+            moved, conflicts, resource_size = move_resources(
                 extracted_resources,
                 bundle / "Contents" / "Resources",
+                written,
             )
-            log(f"已复制 {copied:,} 个资源到词典包；跳过 {conflicts:,} 个冲突项。")
+            log(f"已整理 {moved:,} 个资源到词典包；跳过 {conflicts:,} 个冲突项。")
         verify_bundle(bundle)
 
-        emit(0.92, "保存词典包")
+        emit(0.93, "保存词典包")
         destination = unique_destination(output, name, ".dictionary")
-        shutil.copytree(bundle, destination, symlinks=True)
+        os.replace(bundle, destination)
         verify_bundle(destination)
-        result_size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
+        result_size = compiled_size + resource_size
         log("输出：" + str(destination))
         print("::resultsize::" + str(result_size), flush=True)
         print("::result::" + str(destination), flush=True)
@@ -458,9 +484,11 @@ def worker(args: argparse.Namespace) -> None:
             install_root = Path.home() / "Library" / "Dictionaries"
             install_root.mkdir(parents=True, exist_ok=True)
             installed = unique_destination(install_root, name, ".dictionary")
-            shutil.copytree(destination, installed, symlinks=True)
+            cloned = clone_or_copytree(destination, installed)
             os.utime(install_root, None)
             log("已安装：" + str(installed))
+            if cloned:
+                log("已使用 APFS 快速克隆，未重复写入整本词典。")
             print("::installed::" + str(installed), flush=True)
             subprocess.run(["/usr/bin/killall", "Dictionary"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["/usr/bin/open", "-a", "Dictionary"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
